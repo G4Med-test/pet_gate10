@@ -1,18 +1,8 @@
-# Smoke test run on every push: 100 positrons in a water cylinder.
-# Parameter file of simulation/pet_gate10.py (every command exactly once).
+# Unit test run on every push: main.mac with two slices of 1 s (about 400 000
+# decays). Generated from main.mac: keep it in sync.
 /pet/physicsList          G4EmStandardPhysics_option3
 /pet/productionCut        1 mm
 /pet/randomSeed           123456789
 /pet/numberOfThreads      1
-
-/pet/phantom/material     G4_WATER
-/pet/phantom/radius       10 cm
-/pet/phantom/halfLength   10 cm
-
-/pet/source/particle      e+
-/pet/source/spectrum      F18
-/pet/source/radius        0.5 mm
-/pet/source/halfLength    5 cm
-/pet/source/events        100
-
-/pet/output/statistics    statistics.txt
+/pet/timeSlice            1 s
+/pet/timeStop             2 s
