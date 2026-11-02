@@ -65,9 +65,12 @@ From: ghcr.io/g4med-test/geant4-alma9:{{ TAG }}
     # are passed to CMake as Geant4_DIR and ITK_DIR, the directories of the
     # package configuration files. No build isolation and no dependencies: nothing
     # is fetched from PyPI for this step except the build tools installed here.
+    # opengate includes <vnl_matrix.h>, which ITK installs as vnl/vnl_matrix.h:
+    # its directory goes on the C++ include path.
     /opt/venv/bin/python -m pip install --no-cache-dir setuptools wheel pybind11
     G4INSTALL="$(dirname "$(find /opt/geant4 -name Geant4Config.cmake | head -n 1)")" \
     ITKDIR="$(dirname "$(find /opt/itk -name ITKConfig.cmake | head -n 1)")" \
+    CPLUS_INCLUDE_PATH="$(dirname "$(find /opt/itk/include -name vnl_matrix.h | head -n 1)")" \
         /opt/venv/bin/python -m pip install --no-cache-dir --no-build-isolation --no-deps \
         /tmp/opengate/core
 
