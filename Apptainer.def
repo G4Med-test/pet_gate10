@@ -30,13 +30,15 @@ From: ghcr.io/g4med-test/geant4-alma9:{{ TAG }}
 
 %post
     set -eu
-    dnf install -y --setopt=install_weak_deps=False git
+    # python3.12-devel: Python headers for the pybind11 module of opengate_core.
+    dnf install -y --setopt=install_weak_deps=False git python3.12-devel
     dnf clean all
     rm -rf /var/cache/dnf
 
     # ITK (C++), required by opengate_core. Only the modules it includes are built
     # (itkImage and its iterators, Import/Add/Cast image filters), as static
-    # position-independent libraries linked into the Python module.
+    # position-independent libraries linked into the Python module. The Core and
+    # IO groups are on by default even without the default modules: off as well.
     mkdir -p /tmp/itk/src
     curl -fLsS --retry 5 \
         'https://codeload.github.com/InsightSoftwareConsortium/ITK/tar.gz/refs/tags/{{ ITK_TAG }}' \
@@ -46,7 +48,7 @@ From: ghcr.io/g4med-test/geant4-alma9:{{ TAG }}
         -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/opt/itk \
         -DCMAKE_CXX_STANDARD=17 -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
         -DBUILD_SHARED_LIBS=OFF -DBUILD_TESTING=OFF -DBUILD_EXAMPLES=OFF \
-        -DITK_BUILD_DEFAULT_MODULES=OFF \
+        -DITK_BUILD_DEFAULT_MODULES=OFF -DITKGroup_Core=OFF -DITKGroup_IO=OFF \
         -DModule_ITKCommon=ON -DModule_ITKImageFilterBase=ON -DModule_ITKImageIntensity=ON
     cmake --build /tmp/itk/build --parallel "$(nproc)"
     cmake --install /tmp/itk/build
