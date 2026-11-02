@@ -228,6 +228,7 @@ def add_digitizer(sim, head, layers):
     window = digitizer("DigitizerEnergyWindowsActor", "EnergyFraming", blurring)
     window.channels = [{"name": "Singles", "min": 350 * keV, "max": 650 * keV}]
     window.output_filename = "pet.root"
+    window.root_output.write_to_disk = True  # off in digitizer(); not reset above
 
     # Prompt and delayed coincidence sorters on the singles. As in GATE 9, a single
     # cannot open a window while another one is open (multi_window False), and two
