@@ -1,0 +1,10 @@
+# Validation run: the acquisition of pet_imaging's macro/main.mac, two time slices
+# of 120 s (the gantry orbits by 22.5 deg in between).
+# Parameter file of simulation/pet_gate10.py (every command exactly once); the
+# geometry, sources and digitizer are fixed in the script, as in pet_imaging.
+/pet/physicsList          G4EmStandardPhysics_option3
+/pet/productionCut        1 mm
+/pet/randomSeed           auto
+/pet/numberOfThreads      1
+/pet/timeSlice            120 s
+/pet/timeStop             240 s

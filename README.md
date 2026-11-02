@@ -4,13 +4,10 @@
 compiled from source against the Geant4 of the G4Med
 [`geant4-alma9`](https://github.com/G4Med-test/geant4-alma9) image.
 
-> **Status: skeleton.** The container and the unit test work, but the simulation is
-> only a placeholder: a water cylinder with a positron (¹⁸F spectrum) line source and
-> simulation statistics. The PET geometry, digitizer, observables and reference data
-> are still to be defined with the test referents. Until then there is no
-> `validation/config.json`, so the pipeline skips the validation.
-> The macro-based GATE 9 version of this test is
-> [`pet_imaging`](https://github.com/G4Med-test/pet_imaging).
+The simulation reproduces [`pet_imaging`](https://github.com/G4Med-test/pet_imaging),
+the macro-based GATE 9 version of this test: same scanner, phantom, sources,
+digitizer, acquisition and observables. This allows the two GATE versions to be compared on the
+same Geant4.
 
 ---
 
@@ -55,6 +52,53 @@ skipped and Geant4 finds the datasets mounted at `/g4data` through
 `GEANT4_DATA_DIR`, like every other test. Check that this switch still exists when
 changing `OPENGATE_TAG`.
 
+## The simulation
+
+[`simulation/pet_gate10.py`](simulation/pet_gate10.py) translates the macros of
+pet_imaging (`macro/main.mac` and `macro/mac/*.mac` there) to opengate. Each
+setting quotes the GATE 9 command it comes from.
+
+- **Scanner** (`pet_head.mac`, "NOT a true PET device", built to check several
+  features): a cylindrical PET of 8 heads (rsectors) at 44 cm. Each head has
+  4×4 modules of 5×5 blocks of 5×5 crystals. Every crystal is an LSO/BGO phoswich
+  of two 1.5 cm layers. Each head also has lead end shielding and tungsten septa.
+  The gantry orbits at 0.1875 deg/s around the axis.
+- **Phantom**: a water cylinder of 10 cm radius and 70 cm length.
+- **Sources** (`sources.mac`): ¹⁸F and ¹⁵O line sources of 100 kBq each,
+  0.5 mm radius and 68 cm length, at y = −2 cm and +2 cm. They emit positrons with
+  the GATE analytic spectra and decay with their half-lives.
+- **Physics** (`physics.mac`): the physics list and production cut from the
+  macro. The cut applies in the phantom and the crystals; it is 1 km elsewhere.
+  Materials come from pet_imaging's `GateMaterials.db`.
+- **Digitizer** (`pet_digitizer.mac`):
+  1. adder in each layer;
+  2. readout at the head;
+  3. energy resolution of 26 % at 511 keV;
+  4. 350–650 keV window, giving the `Singles` tree;
+  5. prompt (`Coincidences`) and delayed (`delay`, 500 ns offset) coincidence
+     sorters, with a 120 ns window.
+- **Acquisition**: time slices of `/pet/timeSlice` up to `/pet/timeStop`. GATE 9
+  moves the geometry at the start of each slice, so there is one run per slice.
+  `main.mac` runs 2 × 120 s, like pet_imaging.
+- **Output** in `output/`: `pet.root` (`Singles`, `Coincidences`, `delay`) and
+  `stat.json`.
+
+### Differences from GATE 9
+
+| GATE 9 (pet_imaging) | GATE 10 (here) |
+| --- | --- |
+| merger of `Singles_LSO` into `Singles_BGO` | one hits collection on both layers |
+| `sourceID` | `EventPosition` of the decay: the two sources are 4 cm apart |
+| `comptonPhantom`, `RayleighPhantom` (PhantomSD on phantom, end shielding and septa) | `ProcessDefinedStepInVolumeAttribute` counters on the same volumes, propagated to secondaries and summed by the analysis |
+| `minSectorDifference 2` (default): no pairs from the same or adjacent heads | the sorters reject pairs from the same head (`group_volume`); the analysis removes the pairs from adjacent heads |
+| `delay` sorter policy: default `takeWinnerIfAllAreGoods` | `TakeWinnerIfAllAreGoods` |
+| time in s, a single thread | time in ns; with several threads, the activity is split among them. Event numbers restart in every thread, so the analysis compares (`EventID`, `ThreadID`) pairs |
+
+The one approximation is the adjacent-head cut. Applying it after the
+`TakeWinnerOfGoods` policy, instead of inside it, can make a different choice
+only when more than two singles share the 120 ns window. At 200 kBq this is
+rare.
+
 ## Running
 
 The pipeline starts the container as `<image> <macro>`. The runscript runs
@@ -66,21 +110,32 @@ command must appear exactly once. An unknown command stops the run with
 
 | Command | Example | Meaning |
 | --- | --- | --- |
-| `/pet/physicsList` | `G4EmStandardPhysics_option3` | Geant4 physics list or EM constructor |
-| `/pet/productionCut` | `1 mm` | production cut for γ, e⁻, e⁺ and p |
-| `/pet/randomSeed` | `123456789` | MersenneTwister seed |
+| `/pet/physicsList` | `G4EmStandardPhysics_option3` | Geant4 physics list or EM constructor (GATE 9 `emstandard_opt3`) |
+| `/pet/productionCut` | `1 mm` | production cut for γ, e⁻ and e⁺ in the phantom and crystals |
+| `/pet/randomSeed` | `auto` | MersenneTwister seed, or `auto` |
 | `/pet/numberOfThreads` | `1` | Geant4 threads |
-| `/pet/phantom/material` | `G4_WATER` | phantom material |
-| `/pet/phantom/radius` | `10 cm` | phantom cylinder radius |
-| `/pet/phantom/halfLength` | `10 cm` | phantom cylinder half-length |
-| `/pet/source/particle` | `e+` | source particle |
-| `/pet/source/spectrum` | `F18` | opengate energy spectrum type |
-| `/pet/source/radius` | `0.5 mm` | line source radius |
-| `/pet/source/halfLength` | `5 cm` | line source half-length |
-| `/pet/source/events` | `100` | number of primaries |
-| `/pet/output/statistics` | `statistics.txt` | simulation statistics file (in the working directory) |
+| `/pet/timeSlice` | `120 s` | length of a time slice (one run each) |
+| `/pet/timeStop` | `240 s` | end of the acquisition |
 
-`macro/unit.mac` (100 positrons) is the unit test run on every push.
+`macro/main.mac` is the validation run (`validation/config.json`), as in pet_imaging.
+`macro/unit.mac` is the unit test run on every push. It is `main.mac` with two
+1 s slices, about 400 000 decays. Its log ends with the number of entries of
+the output trees.
+
+## Validation
+
+`validation/parser.py` runs [`validation/scripts/analyse_pet.py`](validation/scripts/analyse_pet.py)
+on `output/pet.root`. The script is a port of pet_imaging's analysis, and the
+portal plots keep the same names:
+
+- transaxial detection positions, for both runs;
+- axial distribution of the detected coincidences;
+- axial sensitivity (unscattered coincidences);
+- axial scatter fraction;
+- ¹⁵O and ¹⁸F decay time distributions, with an exponential fit of the ¹⁵O one;
+- randoms and delayed coincidences in time.
+
+The script header gives the branch mapping between the two GATE versions.
 
 ```bash
 apptainer build pet_gate10.sif Apptainer.def
