@@ -3,24 +3,112 @@ From: ghcr.io/g4med-test/geant4-alma9:{{ TAG }}
 
 # The base image provides Geant4 (/opt/geant4), compilers, CMake and Python with
 # NumPy/uproot (/opt/venv), and already sets PATH, LD_LIBRARY_PATH and the
-# dataset variables (/g4data): no %environment section is needed here.
+# dataset variables (/g4data).
+#
+# This test runs on GATE 10 (opengate, OpenGATE/opengate), built from source
+# against the Geant4 of the base image: the opengate-core wheels on PyPI bundle
+# their own Geant4, so none of them is used. The base Geant4 already has the
+# options of the official opengate "novis" build (MT, TLS model global-dynamic,
+# no GDML, no Qt/OpenGL).
+#
+# opengate 10.1.1 targets Geant4 11.4 (its CI and dataset list are 11.4), hence
+# the 11.4 default TAG: change OPENGATE_TAG together with TAG.
 %arguments
-    TAG=v11.3.2
+    TAG=v11.4.3
     PROJECT_NAME=G4TestGeneric
+    OPENGATE_TAG=10.1.1
+    ITK_TAG=v5.4.4
 
 %labels
     Project {{ PROJECT_NAME }}
     Description "Apptainer container for {{ PROJECT_NAME }}"
+    OpengateVersion {{ OPENGATE_TAG }}
+    ITKVersion {{ ITK_TAG }}
 
 %files
-    . /source
+    simulation /opt/pet_gate10
 
 %post
     set -eu
-    cmake -S /source -B /tmp/build -DCMAKE_PREFIX_PATH=/opt/geant4 -DPROJECT_NAME_OVERRIDE="{{ PROJECT_NAME }}"
-    cmake --build /tmp/build --parallel "$(nproc)"
-    cmake --install /tmp/build
-    rm -rf /tmp/build
+    dnf install -y --setopt=install_weak_deps=False git
+    dnf clean all
+    rm -rf /var/cache/dnf
 
+    # ITK (C++), required by opengate_core. Only the modules it includes are built
+    # (itkImage and its iterators, Import/Add/Cast image filters), as static
+    # position-independent libraries linked into the Python module.
+    mkdir -p /tmp/itk/src
+    curl -fLsS --retry 5 \
+        'https://codeload.github.com/InsightSoftwareConsortium/ITK/tar.gz/refs/tags/{{ ITK_TAG }}' \
+        -o /tmp/itk/source.tar.gz
+    tar -xzf /tmp/itk/source.tar.gz -C /tmp/itk/src --strip-components=1
+    cmake -S /tmp/itk/src -B /tmp/itk/build \
+        -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/opt/itk \
+        -DCMAKE_CXX_STANDARD=17 -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+        -DBUILD_SHARED_LIBS=OFF -DBUILD_TESTING=OFF -DBUILD_EXAMPLES=OFF \
+        -DITK_BUILD_DEFAULT_MODULES=OFF \
+        -DModule_ITKCommon=ON -DModule_ITKImageFilterBase=ON -DModule_ITKImageIntensity=ON
+    cmake --build /tmp/itk/build --parallel "$(nproc)"
+    cmake --install /tmp/itk/build
+    rm -rf /tmp/itk
+
+    # opengate sources: only the pybind11 and fmt submodules are needed to build,
+    # not the (large) test-data one.
+    git clone --quiet --depth 1 --branch '{{ OPENGATE_TAG }}' \
+        https://github.com/OpenGATE/opengate.git /tmp/opengate
+    git -C /tmp/opengate submodule update --quiet --init --depth 1 \
+        core/external/pybind11 core/external/fmt
+
+    # opengate_core, compiled here by its setup.py (CMake). G4INSTALL and ITKDIR
+    # are passed to CMake as Geant4_DIR and ITK_DIR, the directories of the
+    # package configuration files. No build isolation and no dependencies: nothing
+    # is fetched from PyPI for this step except the build tools installed here.
+    /opt/venv/bin/python -m pip install --no-cache-dir setuptools wheel pybind11
+    G4INSTALL="$(dirname "$(find /opt/geant4 -name Geant4Config.cmake | head -n 1)")" \
+    ITKDIR="$(dirname "$(find /opt/itk -name ITKConfig.cmake | head -n 1)")" \
+        /opt/venv/bin/python -m pip install --no-cache-dir --no-build-isolation --no-deps \
+        /tmp/opengate/core
+
+    # The pure-Python opengate package and its dependencies (itk, uproot, pandas...,
+    # none of them containing Geant4). Its opengate-core==<version> requirement is
+    # already satisfied by the module built above, so pip does not download it.
+    /opt/venv/bin/python -m pip install --no-cache-dir --no-build-isolation /tmp/opengate
+    rm -rf /tmp/opengate
+
+%environment
+    # opengate_core would otherwise point G4LEDATA & co. at a geant4_data folder
+    # inside the package and download the datasets there at import time. With
+    # this variable (meant for its ReadTheDocs build) it leaves the Geant4 dataset
+    # setup alone, so Geant4 uses the base image's /g4data (GEANT4_DATA_DIR).
+    export GATEONRTD=1
+
+# The macro is a parameter file read by the simulation script (see README.md).
+# Output is unbuffered so that it reaches the log even if the process aborts.
 %runscript
-    exec /usr/local/bin/{{ PROJECT_NAME }} "$@"
+    exec stdbuf -oL -eL /opt/venv/bin/python -u /opt/pet_gate10/pet_gate10.py "$@"
+
+%test
+    set -eu
+    # opengate_core is the module compiled here, linked to the base image's Geant4,
+    # and reports the same Geant4 version as geant4-config.
+    so="$(/opt/venv/bin/python -c 'import opengate_core.opengate_core as m; print(m.__file__)')"
+    echo "opengate_core: $so"
+    ldd "$so" | grep 'libG4' | grep -q '/opt/geant4/'
+    if ldd "$so" | grep 'libG4' | grep -v '/opt/geant4/'; then
+        echo "opengate_core links a Geant4 outside /opt/geant4" >&2
+        exit 1
+    fi
+    /opt/venv/bin/python - <<'EOF'
+import re
+import subprocess
+from importlib.metadata import version
+
+import opengate_core as g4
+
+name = g4.GateInfo.get_G4Version()
+m = re.search(r"geant4-(\d+)-(\d+)(?:-patch-(\d+))?", name)
+built = "%d.%d.%d" % (int(m[1]), int(m[2]), int(m[3] or 0))
+image = subprocess.check_output(["geant4-config", "--version"], text=True).strip()
+print("opengate", version("opengate"), "- Geant4", built, "- ITK", g4.GateInfo.get_ITKVersion())
+assert built == image, "opengate_core Geant4 %s != image Geant4 %s" % (built, image)
+EOF
