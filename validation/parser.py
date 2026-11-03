@@ -57,7 +57,6 @@ def parse(job):
             yield getJSON(job, "chart",
                           mctool_name="GEANT4",
                           mctool_model=job["PHYSICS_LIST"],
-                          plotType="SCATTER2D",
                           observableName=name[0],
                           targetName=DETECTOR,
                           beamParticle=PARTICLE,
