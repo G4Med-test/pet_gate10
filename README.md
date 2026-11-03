@@ -43,6 +43,13 @@ That is why the default `TAG` (the base image's Geant4) is `v11.4.3`, unlike the
 apptainer build --build-arg TAG=v11.4.3 --build-arg OPENGATE_TAG=10.1.1 pet_gate10.sif Apptainer.def
 ```
 
+`validation/config.json` says so too (`"geant4": {"min": "11.4", "max": "11.4", ...}`):
+a validation of another Geant4 version leaves this test out as *not applicable*
+instead of failing its build, and a pipeline started with such a `geant4_tag` stops
+before building (see
+[Supported Geant4 versions](https://github.com/G4Med-test/ci-workflows#supported-geant4-versions)).
+Update the range with `OPENGATE_TAG`.
+
 ### Geant4 datasets
 
 When imported, `opengate_core` normally sets `G4LEDATA` & co. to a `geant4_data`
